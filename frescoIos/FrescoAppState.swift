@@ -38,6 +38,8 @@ final class FrescoAppState: ObservableObject {
     private var categoriesLoaded = false
     private var cartLoaded = false
     private var profileLoaded = false
+    private var categoryChildrenCache: [String: [CategoryItem]] = [:]
+    private var categoryProductsCache: [String: [Product]] = [:]
 
     var subtotal: Double { checkoutSubtotal ?? cartItems.reduce(0) { $0 + $1.lineTotal } }
     var shipping: Double { checkoutShipping ?? (cartItems.isEmpty ? 0 : 6.99) }
@@ -137,8 +139,26 @@ final class FrescoAppState: ObservableObject {
         do {
             let remote = try await api.categories()
             if !remote.isEmpty { categories = remote }
+            if force {
+                categoryChildrenCache.removeAll()
+                categoryProductsCache.removeAll()
+            }
         } catch {
             remember(error)
+        }
+    }
+
+    func loadCategoryChildren(_ category: CategoryItem) async -> [CategoryItem] {
+        if let cached = categoryChildrenCache[category.id] {
+            return cached
+        }
+        do {
+            let remote = try await api.categoryChildren(categoryId: category.id)
+            categoryChildrenCache[category.id] = remote
+            return remote
+        } catch {
+            remember(error)
+            return []
         }
     }
 
@@ -158,13 +178,22 @@ final class FrescoAppState: ObservableObject {
     }
 
     func loadProducts(category: CategoryItem) async -> [Product] {
+        if let cached = categoryProductsCache[category.id] {
+            return cached
+        }
         do {
             let remote = try await api.products(categoryId: category.id)
-            if !remote.isEmpty { return remote }
+            if !remote.isEmpty {
+                categoryProductsCache[category.id] = remote
+                products = Array(SetPreservingOrder(products + remote))
+                return remote
+            }
         } catch {
             remember(error)
         }
-        return products.filter { $0.category.localizedCaseInsensitiveContains(category.name) }
+        let fallback = products.filter { $0.category.localizedCaseInsensitiveContains(category.name) }
+        categoryProductsCache[category.id] = fallback
+        return fallback
     }
 
     func loadDetail(for product: Product) async -> Product {

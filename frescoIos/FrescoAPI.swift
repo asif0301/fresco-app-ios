@@ -84,6 +84,10 @@ final class FrescoAPI {
         try await listRequest(path: "/api/v1/mobile/categories", authorized: false).map(CategoryItem.init(json:))
     }
 
+    func categoryChildren(categoryId: String) async throws -> [CategoryItem] {
+        try await listRequest(path: "/api/v1/mobile/categories/\(categoryId)/children", authorized: false).map(CategoryItem.init(json:))
+    }
+
     func products(query: String? = nil, featuredOnly: Bool = false) async throws -> [Product] {
         let trimmed = query?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let path: String
