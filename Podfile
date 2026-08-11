@@ -7,6 +7,5 @@ target 'frescoIos' do
 
   # Pods for frescoIos
 
-pod 'Kingfisher', '~> 7.0'
 
 end
