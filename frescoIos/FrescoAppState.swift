@@ -117,12 +117,21 @@ final class FrescoAppState: ObservableObject {
             let snapshot = try await api.home()
             if !snapshot.banners.isEmpty { banners = snapshot.banners }
             if !snapshot.categories.isEmpty { categories = snapshot.categories }
-            if !snapshot.featuredProducts.isEmpty { featuredProducts = snapshot.featuredProducts }
-            if !snapshot.bestSellers.isEmpty { bestSellers = snapshot.bestSellers }
-            recommendedProducts = snapshot.recommendedProducts
-            if products == demoProducts {
-                products = Array(SetPreservingOrder(snapshot.featuredProducts + snapshot.bestSellers + snapshot.recommendedProducts))
-                if products.isEmpty { products = demoProducts }
+            var resolvedFeatured = snapshot.featuredProducts
+            if resolvedFeatured.isEmpty {
+                resolvedFeatured = (try? await api.products()) ?? []
+            }
+            let remoteProducts = Array(SetPreservingOrder(resolvedFeatured + snapshot.bestSellers + snapshot.recommendedProducts))
+            if !remoteProducts.isEmpty {
+                products = remoteProducts
+                featuredProducts = resolvedFeatured.isEmpty ? Array(remoteProducts.prefix(10)) : resolvedFeatured
+                bestSellers = snapshot.bestSellers.isEmpty ? remoteProducts : snapshot.bestSellers
+                recommendedProducts = snapshot.recommendedProducts
+            } else if products == demoProducts && !isAuthenticated {
+                products = demoProducts
+                featuredProducts = demoProducts.filter(\.isFeatured)
+                bestSellers = demoProducts.filter { $0.rating >= 4.6 }
+                recommendedProducts = []
             }
         } catch {
             remember(error)
@@ -233,7 +242,8 @@ final class FrescoAppState: ObservableObject {
             return true
         }
         do {
-            let snapshot = try await api.addToCart(productId: product.id, quantity: quantity)
+            let cartProduct = try await serverBackedProduct(for: product)
+            let snapshot = try await api.addToCart(productId: cartProduct.id, quantity: quantity)
             if !snapshot.items.isEmpty {
                 applyCartSnapshot(snapshot)
             }
@@ -582,6 +592,22 @@ final class FrescoAppState: ObservableObject {
         }
     }
 
+    private func serverBackedProduct(for product: Product) async throws -> Product {
+        if !isDemoProduct(product) { return product }
+        await loadHome(force: true)
+        if let known = knownProduct(matching: product), !isDemoProduct(known) {
+            return known
+        }
+        let matches = try await api.products(query: product.name)
+        if let exact = matches.first(where: { !isDemoProduct($0) && $0.name.caseInsensitiveCompare(product.name) == .orderedSame }) {
+            return exact
+        }
+        if let first = matches.first(where: { !isDemoProduct($0) }) {
+            return first
+        }
+        throw APIError.requestFailed("This sample product is not available in the store cart.")
+    }
+
     private func knownProduct(matching product: Product) -> Product? {
         let allProducts = products
             + featuredProducts
@@ -592,6 +618,12 @@ final class FrescoAppState: ObservableObject {
             candidate.id == product.id
                 || (!product.slug.isEmpty && candidate.slug == product.slug)
                 || (!product.name.isEmpty && candidate.name.caseInsensitiveCompare(product.name) == .orderedSame)
+        }
+    }
+
+    private func isDemoProduct(_ product: Product) -> Bool {
+        demoProducts.contains { demo in
+            demo.id == product.id && demo.slug == product.slug && demo.name == product.name
         }
     }
 
