@@ -216,7 +216,7 @@ final class FrescoAppState: ObservableObject {
             cartLoaded = true
         }
         do {
-            cartItems = try await api.cart().items
+            applyCartSnapshot(try await api.cart())
         } catch {
             remember(error)
         }
@@ -224,11 +224,20 @@ final class FrescoAppState: ObservableObject {
 
     func addToCart(_ product: Product, quantity: Int = 1) async -> Bool {
         guard isAuthenticated else {
-            cartItems.append(CartItem(id: UUID().uuidString, product: product, quantity: quantity))
+            if let index = cartItems.firstIndex(where: { $0.product.id == product.id }) {
+                cartItems[index].quantity += quantity
+            } else {
+                cartItems.append(CartItem(id: UUID().uuidString, product: product, quantity: quantity))
+            }
+            clearCheckoutTotals()
             return true
         }
         do {
-            cartItems = try await api.addToCart(productId: product.id, quantity: quantity).items
+            let snapshot = try await api.addToCart(productId: product.id, quantity: quantity)
+            if !snapshot.items.isEmpty {
+                applyCartSnapshot(snapshot)
+            }
+            await loadCart(force: true)
             return true
         } catch {
             remember(error)
@@ -244,10 +253,12 @@ final class FrescoAppState: ObservableObject {
         if let index = cartItems.firstIndex(where: { $0.id == item.id }) {
             cartItems[index].quantity = quantity
         }
+        clearCheckoutTotals()
         guard isAuthenticated else { return }
         Task {
             do {
                 try await api.updateCartItem(cartId: item.id, quantity: quantity)
+                await loadCart(force: true)
             } catch {
                 remember(error)
             }
@@ -256,12 +267,30 @@ final class FrescoAppState: ObservableObject {
 
     func removeCartItem(_ item: CartItem) {
         cartItems.removeAll { $0.id == item.id }
+        clearCheckoutTotals()
         guard isAuthenticated else { return }
         Task {
             do {
                 try await api.deleteCartItem(cartId: item.id)
+                await loadCart(force: true)
             } catch {
                 remember(error)
+            }
+        }
+    }
+
+    func clearCart() {
+        let items = cartItems
+        cartItems.removeAll()
+        clearCheckoutTotals()
+        guard isAuthenticated else { return }
+        Task {
+            for item in items {
+                do {
+                    try await api.deleteCartItem(cartId: item.id)
+                } catch {
+                    remember(error)
+                }
             }
         }
     }
@@ -526,13 +555,44 @@ final class FrescoAppState: ObservableObject {
     }
 
     private func applyCartSnapshot(_ snapshot: CartSnapshot) {
-        if !snapshot.items.isEmpty {
-            cartItems = snapshot.items
-        }
+        cartItems = enrichedCartItems(snapshot.items)
         checkoutSubtotal = snapshot.subtotal
         checkoutShipping = snapshot.shipping
         checkoutDiscount = snapshot.discount
         checkoutTotal = snapshot.total
+    }
+
+    private func enrichedCartItems(_ items: [CartItem]) -> [CartItem] {
+        items.map { item in
+            guard let known = knownProduct(matching: item.product) else { return item }
+            var product = item.product
+            if product.name.isEmpty || product.name == "Product" { product.name = known.name }
+            if product.slug.isEmpty { product.slug = known.slug }
+            if product.imageUrl.isEmpty { product.imageUrl = known.imageUrl }
+            if product.category.isEmpty || product.category == "Fresh grocery" { product.category = known.category }
+            if product.price == 0 { product.price = known.price }
+            if product.salePrice == 0 { product.salePrice = known.salePrice }
+            if product.rating == 4.5 { product.rating = known.rating }
+            if product.reviewCount == 0 { product.reviewCount = known.reviewCount }
+            if product.description.isEmpty { product.description = known.description }
+            if product.badges.isEmpty { product.badges = known.badges }
+            product.isFeatured = product.isFeatured || known.isFeatured
+            product.isFavourite = product.isFavourite || known.isFavourite
+            return CartItem(id: item.id, product: product, quantity: item.quantity)
+        }
+    }
+
+    private func knownProduct(matching product: Product) -> Product? {
+        let allProducts = products
+            + featuredProducts
+            + bestSellers
+            + recommendedProducts
+            + categoryProductsCache.values.flatMap { $0 }
+        return allProducts.first { candidate in
+            candidate.id == product.id
+                || (!product.slug.isEmpty && candidate.slug == product.slug)
+                || (!product.name.isEmpty && candidate.name.caseInsensitiveCompare(product.name) == .orderedSame)
+        }
     }
 
     private func clearCheckoutTotals() {

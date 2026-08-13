@@ -330,9 +330,13 @@ final class FrescoAPI {
     }
 
     private func cartSnapshot(_ value: Any) -> CartSnapshot {
-        let map = unwrapMap(value)
-        let items = extractList(value).map { item -> CartItem in
-            let productJSON = mapValue(item["product"]) ?? item
+        let map = cartMap(value)
+        let items = cartItemsList(value).map { item -> CartItem in
+            let productJSON = mapValue(item["product"])
+                ?? mapValue(item["product_data"])
+                ?? mapValue(item["item"])
+                ?? mapValue(mapValue(item["variation"])?["product"])
+                ?? item
             return CartItem(
                 id: clean(item["id"] ?? item["cart_id"] ?? UUID().uuidString),
                 product: Product(json: productJSON),
@@ -344,6 +348,33 @@ final class FrescoAPI {
         let discount = doubleValue(map["discount"]) ?? 0
         let total = doubleValue(map["total"]) ?? max(0, subtotal + shipping - discount)
         return CartSnapshot(items: items, subtotal: subtotal, shipping: shipping, discount: discount, total: total)
+    }
+
+    private func cartMap(_ value: Any) -> [String: Any] {
+        guard let map = value as? [String: Any] else { return [:] }
+        if let cart = map["cart"] as? [String: Any] { return cart }
+        if let basket = map["basket"] as? [String: Any] { return basket }
+        if let data = map["data"] as? [String: Any] {
+            if let cart = data["cart"] as? [String: Any] { return cart }
+            if let basket = data["basket"] as? [String: Any] { return basket }
+            return data
+        }
+        return map
+    }
+
+    private func cartItemsList(_ value: Any) -> [[String: Any]] {
+        if let list = value as? [[String: Any]] { return list }
+        guard let map = value as? [String: Any] else { return [] }
+        for key in ["items", "cart_items", "cartItems"] {
+            if let list = map[key] as? [[String: Any]] { return list }
+        }
+        for key in ["cart", "basket", "payload", "data"] {
+            if let nested = map[key] {
+                let list = cartItemsList(nested)
+                if !list.isEmpty { return list }
+            }
+        }
+        return []
     }
 
     private func unwrapMap(_ value: Any) -> [String: Any] {
