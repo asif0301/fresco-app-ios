@@ -20,8 +20,6 @@
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		5AF5D6B4302B3BAE0044F283 /* frescoIos */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-			);
 			path = frescoIos;
 			sourceTree = "<group>";
 		};
@@ -45,7 +43,6 @@
 				883069EF004B1C5B7C5423C5 /* Pods-frescoIos.debug.xcconfig */,
 				818420C8E8EB3B5CCAE5C3AF /* Pods-frescoIos.release.xcconfig */,
 			);
-			name = Pods;
 			path = Pods;
 			sourceTree = "<group>";
 		};
